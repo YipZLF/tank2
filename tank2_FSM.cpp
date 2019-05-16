@@ -762,12 +762,11 @@ namespace TankGame
 
 namespace TankGame{
 
-      /*RandAction*/
+/*RandAction*/
 int RandBetween(int from, int to)
 {
     return rand() % (to - from) + from;
 }
-
 Action RandAction(int tank)
 {
     while (true)
@@ -778,11 +777,13 @@ Action RandAction(int tank)
     }
 }
 
-  enum AgentState{
-      EXPLORE = 1,
-      ATTACK = 2,
-      DEFEND = 3
-  };
+
+
+enum AgentState{
+    EXPLORE = 1,
+    ATTACK = 2,
+    DEFEND = 3
+};
 
 #define TANK_CNT 2
 #define INF 0x7fffffff
@@ -792,9 +793,14 @@ Action RandAction(int tank)
     public:
       AgentState cur_state[TANK_CNT];
       int mySide;
+      bool has_shoot[2];
+      
       // Take action
       Action takeAction(int tank_id);
-      bool has_shoot[2];
+      // State transition happens here.
+      bool changeState(int tank_id);
+      
+
       // EXPLORE
       Action Explore(int tank_id);
       // for A* algorithm, f = g(real) + h(estimate)
@@ -810,10 +816,13 @@ Action RandAction(int tank)
       // Attack
       Action Attack(int tank_id);
       Action inShootRange(int tank_id,int e_tank_id);
+      // aim[i] marks the idx of the enemy tank that 
+      // tank i of our side aims at
       vector<int> aim[2];
+
+      // Defend
       Action Defend(int tank_id);
 
-      bool changeState();
       HeadQuarter(){
           cur_state[0] = EXPLORE;
           cur_state[1] = EXPLORE;
@@ -830,41 +839,39 @@ Action RandAction(int tank)
         }
   };
 
-  bool HeadQuarter::changeState(){
-      int dist1,dist2;
-      for(int i = 0 ;i < 2;++i){
-          // change to attack
-          dist1 = getManhattenDist(field->tankX[mySide][i],field->tankY[mySide][i],
-                                        field->tankX[(mySide+1)%2][0],field->tankY[(mySide+1)%2][0]);
-          dist2 = getManhattenDist(field->tankX[mySide][i],field->tankY[mySide][i],
-                                        field->tankX[(mySide+1)%2][1],field->tankY[(mySide+1)%2][1]);
-          if(dist2<=2 || dist1<=2){
-              aim[i].push_back( ((dist1<dist2)?0:1));
-              cur_state[i] = ATTACK;
-              return true;
-          }
+  bool HeadQuarter::changeState(int tank_id){
+    int dist1,dist2;
+    int i= tank_id;
+    // change to attack: if enemy tank is close
+    dist1 = getManhattenDist(field->tankX[mySide][i],field->tankY[mySide][i],
+                                field->tankX[(mySide+1)%2][0],field->tankY[(mySide+1)%2][0]);
+    dist2 = getManhattenDist(field->tankX[mySide][i],field->tankY[mySide][i],
+                                field->tankX[(mySide+1)%2][1],field->tankY[(mySide+1)%2][1]);
+    if(dist2<=2 || dist1<=2){
+        aim[i].push_back( ((dist1<dist2)?0:1));
+        cur_state[i] = ATTACK;
+    }
 
-          // defend
-          dist1 = getManhattenDist(baseX[mySide],baseY[mySide],
-                                        field->tankX[(mySide+1)%2][0],field->tankY[(mySide+1)%2][0]);
-          dist2 = getManhattenDist(baseX[mySide],baseY[mySide],
-                                        field->tankX[(mySide+1)%2][1],field->tankY[(mySide+1)%2][1]);
-          if(dist2<=2 || dist1<=2){
-              aim[i].push_back( ((dist1<dist2)?0:1));
-              cur_state[i] = DEFEND;
-              return true;
-          }
-          
-          // back to explore
-         if((cur_state[i] == DEFEND || cur_state[i]==ATTACK)
-          && field->tankX[(mySide+1)%2][aim[i][0]==-1]){
-             cur_state[i] = EXPLORE;
-             aim[i].erase(aim[i].begin());
-             return true;
-         }
-      }
-      return false;
+    // defend: if enemy tank is close to our base
+    dist1 = getManhattenDist(baseX[mySide],baseY[mySide],
+                                field->tankX[(mySide+1)%2][0],field->tankY[(mySide+1)%2][0]);
+    dist2 = getManhattenDist(baseX[mySide],baseY[mySide],
+                                field->tankX[(mySide+1)%2][1],field->tankY[(mySide+1)%2][1]);
+    if(dist2<=2 || dist1<=2){
+        aim[i].push_back( ((dist1<dist2)?0:1));
+        cur_state[i] = DEFEND;
+    }
+    
+    // back to explore: if enemy tank is destroyed
+    if((cur_state[i] == DEFEND || cur_state[i]==ATTACK)
+    && field->tankX[(mySide+1)%2][aim[i][0]]==-1){
+        cur_state[i] = EXPLORE;
+        aim[i].erase(aim[i].begin());
+    }
+    return true;
   }
+
+
   Action HeadQuarter::takeAction(int tank_id){
     if(!field->tankAlive[mySide][tank_id])
       return Stay;
@@ -883,7 +890,9 @@ Action RandAction(int tank)
         to_take = Stay;
         break;
     }
-    changeState();
+    changeState(tank_id);
+
+    // Shooting twice is prohibited.
     if( !ActionIsShoot(to_take) ){
         has_shoot[tank_id] = false;
     }else{
@@ -897,12 +906,29 @@ Action RandAction(int tank)
   }
 
   int HeadQuarter::getEstimateScore(int x,int y,int dst_x,int dst_y){
+    /* Can be further modified:
+     TODO: come up with better strategy for path searching by modifying
+     the estimation function here. 
+    */
     #ifdef DEBUG
     cout<<"m distance of ("<<x<<','<<y<<") is "<<ddx+ddy<<endl;
     #endif
       return getManhattenDist(x,y,dst_x,dst_y);
   }
+
+
   void HeadQuarter::A_search(int tank_id,int dst_x,int dst_y){
+    /*
+    Implementation of A * search algorithm. Faster than BFS and can be adaptive.
+    Let starting point be S, destinnation point be D
+    for each nodes i in a graph G:
+        f[i] = g[i] + h[i]
+        g[i]: the REAL cost of getting to i from S
+            can be calculated easily. g[i] = g[i-1] + cost(from i-1 to i)
+        h[i]: the ESTIMATED cost of getting to D from i
+            need sophisticated guess or estimate.
+    the select path is stored in next_loc_{xy}
+    */
     mySide = field->mySide;
     int x0 = field->tankX[mySide][tank_id];
     int y0 = field->tankY[mySide][tank_id];
