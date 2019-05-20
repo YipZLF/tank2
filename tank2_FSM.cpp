@@ -1,7 +1,10 @@
-// Tank2 游戏样例程序
-// 随机策略
+// Tank2 
+// FSM
 // 作者：289371298 upgraded from zhouhy
 // https://www.botzone.org.cn/games/Tank2
+// FSM Author:
+// Yipzlf 
+// Caoyk
 
 #include <stack>
 #include <set>
@@ -10,6 +13,7 @@
 #include <ctime>
 #include <cstring>
 #include <queue>
+#include <map>
 #ifdef _BOTZONE_ONLINE
 #include "jsoncpp/json.h"
 #else
@@ -29,6 +33,7 @@ using std::set;
 using std::deque;
 using std::vector;
 using std::pair;
+using std::map;
 using std::make_pair;
 
 namespace TankGame
@@ -149,7 +154,9 @@ namespace TankGame
             return x % 4;
         return -1;
     }
-
+    inline bool isReachable(FieldItem item){
+        return (item & (Brick|Steel|Water|Blue0|Blue1|Red0|Red1|Base))==0;
+    }
     // 物件消失的记录，用于回退
     struct DisappearLog
     {
@@ -720,9 +727,7 @@ namespace TankGame
         }
 #endif
         Internals::reader.parse(inputString, input);
-#ifdef DEBUG
-                cout<<"LongLive"<<endl;
-                #endif
+
         if (input.isObject())
         {
             Json::Value requests = input["requests"];
@@ -788,6 +793,12 @@ enum AgentState{
     ATTACK = 2,
     DEFEND = 3
 };
+enum FieldMark{
+    Plain = 0,
+    Dangerous = 1,
+    Unreachable = 2,
+    Unbreakable = 4
+};
 
 #define TANK_CNT 2
 #define INF 0x7fffffff
@@ -823,6 +834,13 @@ enum AgentState{
       // aim[i] marks the idx of the enemy tank that 
       // tank i of our side aims at
       vector<int> aim[2];
+      void markDangerousPosition(int tank_id);
+      int mark_of_field[fieldHeight][fieldWidth];
+      void resetFieldMark();
+      void BFSPathtoSafety(int x,int y);
+      int sp_length,tmp_sp_l; // shortest path length;
+      int safe_x,safe_y;
+      deque<Action> to_safety;
 
       // Defend
       Action Defend(int tank_id);
@@ -834,6 +852,9 @@ enum AgentState{
           first_move[1] = true;
           has_shoot[0] = false;
           has_shoot[1] = false;
+          sp_length = INF;
+          tmp_sp_l = 0;
+          memset(mark_of_field,0,sizeof(mark_of_field));
         }
     private:
         int getManhattenDist(int x,int y, int dst_x,int dst_y){
@@ -911,6 +932,7 @@ enum AgentState{
         has_shoot[tank_id] = false;
     }else{
         if(has_shoot[tank_id]){
+            // escape
             to_take = Stay;
             has_shoot[tank_id] = false;
         }else{
@@ -920,6 +942,16 @@ enum AgentState{
     #ifdef DEBUG
         cout<<"Shot state of "<<tank_id<<" is "<<has_shoot[tank_id]<<endl;
       #endif
+      if(Stay == ((Action) to_take)){
+          int randnum = (rand() %100);
+        for(int i = 0; i <4; ++i){
+                    int x = field->tankX[mySide][tank_id] + dx[(randnum+i)%4];
+                    int y = field->tankY[mySide][tank_id] + dy[(randnum+i)%4];
+                    if(CoordValid(x,y) && isReachable(field->gameField[y][x]) ){
+                        to_take = (Action)((randnum+i)%4);
+                    }
+                }
+        }
     return to_take;
   }
 
@@ -1019,28 +1051,28 @@ enum AgentState{
             xx = xx+dx[pfather[tank_id][tmp_y][tmp_x]];
             yy = yy+dy[pfather[tank_id][tmp_y][tmp_x]];
         }
-    #ifdef DEBUG
+   /* #ifdef DEBUG
     
         cout<<"A search succeeded."<<endl;
         for(int i = 0 ;i < next_loc_x[tank_id].size();++i){
             cout<<next_loc_x[tank_id][i]<<','<<next_loc_y[tank_id][i]<<endl;
         }
-    #endif
+    #endif*/
     }
-    #ifdef DEBUG
+  /*  #ifdef DEBUG
     else{
         cout<<"A search failed."<<endl;
     }
-    #endif
+    #endif*/
     memset(g_score,0,sizeof(g_score));
     memset(h_score,0,sizeof(h_score));
     memset(pfather,0,sizeof(pfather));
   }
   Action HeadQuarter::Explore(int tank_id){
-    if(first_move[tank_id] || (rand() %100) >90){
+    //if(first_move[tank_id] || (rand() %100) >90){
         A_search(tank_id,baseX[(mySide+1)%2],baseY[(mySide+1)%2]); 
         first_move[tank_id]=false;
-    }
+    //}
     
     
     int x0 = field->tankX[mySide][tank_id];
@@ -1114,42 +1146,123 @@ enum AgentState{
 
 
   }
+  
+    void HeadQuarter::markDangerousPosition(int e_tank_id){
+        int ex= field->tankX[(mySide+1)%2][e_tank_id];
+        int ey= field->tankY[(mySide+1)%2][e_tank_id];
+        
+        for(int i = ex+1; i<fieldWidth ; ++i ){//right
+            if((field->gameField[ey][i] & (Steel|Brick)) !=0)
+                break;
+            mark_of_field[ey][i] ^= Dangerous;
+        }
+        for(int i = ex-1; i>=0 ; --i ){//left
+            if((field->gameField[ey][i] & (Steel|Brick)) !=0)
+                break;
+            mark_of_field[ey][i] ^= Dangerous;
+        }
+        for(int i = ey+1; i<fieldHeight ; ++i ){//down
+            if((field->gameField[i][ex] & (Steel|Brick)) !=0)
+                break;
+            mark_of_field[i][ex] ^= Dangerous;
+        }
+        for(int i = ey-1; i>= 0 ; --i ){//up
+            if((field->gameField[i][ex] & (Steel|Brick)) !=0)
+                break;
+            mark_of_field[i][ex] ^= Dangerous;
+        }
+    }
+    void HeadQuarter::BFSPathtoSafety(int x,int y){
+        set<pair<int, int > > vis;
+        map<pair<int, int >, Action> pointer;
+        deque<pair<int, int > > qe;
+        qe.push_back(make_pair(x,y));
+        vis.insert(make_pair(x,y));
+        
+        while(!qe.empty()){
+            int _x = qe.front().first;
+            int _y = qe.front().second;
+            qe.pop_front();
+            for(int i = 0; i < 4;++i){
+                int xx = _x + dx[i];
+                int yy = _y + dy[i];
+                if(!CoordValid(xx,yy) ||  !isReachable(field->gameField[yy][xx]) ||
+                    vis.find(make_pair(xx,yy))!=vis.end()){
+                    continue;
+                }else{
+                    pointer.insert( make_pair( make_pair(xx,yy) ,(Action)i));
+                    if((mark_of_field[yy][xx] & Dangerous)==0){
+                        to_safety.clear();
+                        int tmpx = xx, tmpy = yy;
+                        while(!(tmpx==x&&tmpy==y)){
+                            Action tmp_act = pointer[make_pair(tmpx,tmpy)];
+                            to_safety.push_front(tmp_act);
+                            tmpx = tmpx + dx[((int)tmp_act +2 )%4];
+                            tmpy = tmpy + dy[((int)tmp_act +2 )%4];
+                        }
+                        return ;
+                    }else{
+                        qe.push_back(make_pair(xx,yy));
+                    }
+                }
+            }
+        }
+    }
 
-  Action HeadQuarter::Attack(int tank_id){
+    void HeadQuarter::resetFieldMark(){
+        memset(mark_of_field,0,sizeof(mark_of_field));
+    }
+    Action HeadQuarter::Attack(int tank_id){
     int move = -1;
-    if((move = inShootRange(tank_id,aim[tank_id][0])) != Stay){
-        return (Action)move;
+    if(!has_shoot[tank_id]){
+        if((move = inShootRange(tank_id,aim[tank_id][0])) != Stay){
+            return (Action)move;
+        }
     }else{
-        return Stay;
+        /* go to safe place */
+        // Get dangerous place
+        markDangerousPosition(aim[tank_id][0]);
+        // DFS and get shortest path
+        BFSPathtoSafety(field->tankX[mySide][tank_id],field->tankY[mySide][tank_id]);
+        
+        resetFieldMark();
+        // Go to the position
+        if(to_safety.size()==0){
+            return Stay;
+        }else{
+            move = to_safety.front();
+            to_safety.pop_front();
+            return (Action)move;
+        }
     }
-  }
-
-  Action HeadQuarter::Defend(int tank_id){
-    A_search(tank_id,baseX[mySide],baseY[mySide]);
-    
-    int x0 = field->tankX[mySide][tank_id];
-    int y0 = field->tankY[mySide][tank_id];
-    int next_x = next_loc_x[tank_id].front() ;
-    int next_y = next_loc_y[tank_id].front() ;
-    
-    int next_move = 0;
-    for(int i = 0 ; i < 4; ++i){
-            if((x0+dx[i]==next_x) &&(y0+dy[i]==next_y))
-                next_move = i;
     }
 
-    if((field->gameField[next_y][next_x] & (Brick ))!=0){
-        return (Action)(next_move+4); 
-    }else if(field->gameField[next_y][next_x]==None){
-        next_loc_x[tank_id].pop_front();
-        next_loc_y[tank_id].pop_front();
-        return (Action)next_move;
-    }else{
-        return (Action) -1;
-    }
-  }
+    Action HeadQuarter::Defend(int tank_id){
+        A_search(tank_id,baseX[mySide],baseY[mySide]);
 
-  HeadQuarter* hq = new HeadQuarter;
+        int x0 = field->tankX[mySide][tank_id];
+        int y0 = field->tankY[mySide][tank_id];
+        int next_x = next_loc_x[tank_id].front() ;
+        int next_y = next_loc_y[tank_id].front() ;
+
+        int next_move = 0;
+        for(int i = 0 ; i < 4; ++i){
+                if((x0+dx[i]==next_x) &&(y0+dy[i]==next_y))
+                    next_move = i;
+        }
+
+        if((field->gameField[next_y][next_x] & (Brick ))!=0){
+            return (Action)(next_move+4); 
+        }else if(field->gameField[next_y][next_x]==None){
+            next_loc_x[tank_id].pop_front();
+            next_loc_y[tank_id].pop_front();
+            return (Action)next_move;
+        }else{
+            return (Action) -1;
+        }
+    }
+
+    HeadQuarter* hq = new HeadQuarter;
 
 }
 
@@ -1176,6 +1289,11 @@ int main()
         #endif
             }else{
                 TankGame::ReadInput_longlive(cin);
+                #ifdef DEBUG
+            cout<<TankGame::field->mySide<<endl;
+            TankGame::field->DebugPrint();
+            printf("Tank 0: %d, tank 1 : %d \n",TankGame::hq->cur_state[0],TankGame::hq->cur_state[1]);
+        #endif
             }
             TankGame::SubmitAndDontExit(TankGame::hq->takeAction(0),TankGame::hq->takeAction(1));
             cout << flush;
