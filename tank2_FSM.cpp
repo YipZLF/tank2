@@ -720,20 +720,24 @@ namespace TankGame
         }
 #endif
         Internals::reader.parse(inputString, input);
-
+#ifdef DEBUG
+                cout<<"LongLive"<<endl;
+                #endif
         if (input.isObject())
         {
-            Json::Value requests = input["requests"], responses = input["responses"];
-            if (!responses.isNull() && responses.isArray())
-            {
-                size_t  n = responses.size();
+            Json::Value requests = input["requests"];
+            
+                size_t  n = requests.size();
+                #ifdef DEBUG
+                cout<<"request size:"<<n<<endl;
+                cout<<"request :"<<requests[0]<<endl;
+                #endif
                 int i;
                 for (i = 0; i < n; i++)
                 {
-                    Internals::_processRequestOrResponse(responses[i], true);
+                    Internals::_processRequestOrResponse(requests[i], true);
                 }
                 return;
-            }
         }
         Internals::_processRequestOrResponse(input, true);
     }
@@ -850,6 +854,7 @@ enum AgentState{
     if(dist2<=2 || dist1<=2){
         aim[i].push_back( ((dist1<dist2)?0:1));
         cur_state[i] = ATTACK;
+        return true;
     }
 
     // defend: if enemy tank is close to our base
@@ -860,6 +865,7 @@ enum AgentState{
     if(dist2<=2 || dist1<=2){
         aim[i].push_back( ((dist1<dist2)?0:1));
         cur_state[i] = DEFEND;
+        return true;
     }
     
     // back to explore: if enemy tank is destroyed
@@ -873,11 +879,20 @@ enum AgentState{
 
 
   Action HeadQuarter::takeAction(int tank_id){
+      #ifdef DEBUG
+        cout<<"cur state of "<<tank_id<<" is "<<cur_state[tank_id]<<endl;
+      #endif
+
+    #ifdef DEBUG
+        cout<<"Shot state of "<<tank_id<<" is "<<has_shoot[tank_id]<<endl;
+      #endif
+    changeState(tank_id);
     if(!field->tankAlive[mySide][tank_id])
       return Stay;
     Action to_take;
     switch (cur_state[tank_id]){
       case EXPLORE: 
+      
         to_take = Explore(tank_id);
         break;
       case ATTACK:
@@ -890,7 +905,6 @@ enum AgentState{
         to_take = Stay;
         break;
     }
-    changeState(tank_id);
 
     // Shooting twice is prohibited.
     if( !ActionIsShoot(to_take) ){
@@ -898,10 +912,14 @@ enum AgentState{
     }else{
         if(has_shoot[tank_id]){
             to_take = Stay;
+            has_shoot[tank_id] = false;
         }else{
             has_shoot[tank_id] = true;
         }
     }
+    #ifdef DEBUG
+        cout<<"Shot state of "<<tank_id<<" is "<<has_shoot[tank_id]<<endl;
+      #endif
     return to_take;
   }
 
@@ -910,9 +928,7 @@ enum AgentState{
      TODO: come up with better strategy for path searching by modifying
      the estimation function here. 
     */
-    #ifdef DEBUG
-    cout<<"m distance of ("<<x<<','<<y<<") is "<<ddx+ddy<<endl;
-    #endif
+
       return getManhattenDist(x,y,dst_x,dst_y);
   }
 
@@ -1055,10 +1071,16 @@ enum AgentState{
       int y= field->tankY[mySide][tank_id];
       int ex= field->tankX[(mySide+1)%2][e_tank_id];
       int ey= field->tankY[(mySide+1)%2][e_tank_id];
+      #ifdef DEBUG
+      cout<<"My (x,y):"<<'('<<x<<','<<y<<')'<<endl;
+      cout<<"enemy (x,y):"<<'('<<ex<<','<<ey<<')'<<endl;
+      #endif
       if(x==ex){
         int i;
         Action to_take = (ey>=y)?DownShoot:UpShoot;
-        for(i =y; (ey>=y)?(i<=ey):(i>=ey);(ey>=y)?(i++):(i--)){
+        for((ey>=y)?(i = y+1):(i=y-1);
+            (ey>=y)?(i<=ey):(i>=ey);
+            (ey>=y)?(i++):(i--)){
             if((field->gameField[i][x] & (Steel|Brick | 
             ((mySide==Blue)?(Blue0|Blue1):(Red0|Red1) ))) != 0){
             auto tmp = RandAction(tank_id);
@@ -1073,7 +1095,9 @@ enum AgentState{
       if(ey==y){
         int i;
         Action to_take = (ex>=x)?RightShoot:LeftShoot;
-        for(i =x; (ex>=x)?(i<=ex):(i>=ex);(ex>=x)?(i++):(i--)){
+        for((ex>=x)? (i =x+1):(i = x-1);
+           (ex>=x)?(i<=ex):(i>=ex);
+           (ex>=x)?(i++):(i--)){
             if((field->gameField[y][i] & (Steel|Brick | 
             ((mySide==Blue)?(Blue0|Blue1):(Red0|Red1) ))) != 0){
             auto tmp = RandAction(tank_id);
@@ -1093,12 +1117,13 @@ enum AgentState{
 
   Action HeadQuarter::Attack(int tank_id){
     int move = -1;
-    if((move = inShootRange(tank_id,aim[tank_id][0])) != -1){
+    if((move = inShootRange(tank_id,aim[tank_id][0])) != Stay){
         return (Action)move;
     }else{
         return Stay;
     }
   }
+
   Action HeadQuarter::Defend(int tank_id){
     A_search(tank_id,baseX[mySide],baseY[mySide]);
     
@@ -1137,21 +1162,24 @@ int main()
     freopen("debug.in","r",stdin);
     #endif
     srand((unsigned)time(nullptr));
-    bool first_round = true;
+        bool first_round = true;
         string data, globaldata;
-        if(first_round){
-            TankGame::ReadInput(cin, data, globaldata);
-            TankGame::hq->mySide = TankGame::field->mySide;
-        }else{
-            TankGame::ReadInput_longlive(cin);
+        while(true){
+            if(first_round){
+                TankGame::ReadInput(cin, data, globaldata);
+                TankGame::hq->mySide = TankGame::field->mySide;
+                first_round = false;
+        #ifdef DEBUG
+            cout<<TankGame::field->mySide<<endl;
+            TankGame::field->DebugPrint();
+            printf("Tank 0: %d, tank 1 : %d \n",TankGame::hq->cur_state[0],TankGame::hq->cur_state[1]);
+        #endif
+            }else{
+                TankGame::ReadInput_longlive(cin);
+            }
+            TankGame::SubmitAndDontExit(TankGame::hq->takeAction(0),TankGame::hq->takeAction(1));
+            cout << flush;
         }
-        TankGame::SubmitAndExit(TankGame::hq->takeAction(0),TankGame::hq->takeAction(1));
- 
-    #ifdef DEBUG
-        cout<<TankGame::field->mySide<<endl;
-        TankGame::field->DebugPrint();
-        TankGame::hq->A_search(1);
-        TankGame::hq->A_search(0);
-    #endif
+    
 
 }
