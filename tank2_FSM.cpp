@@ -3,6 +3,7 @@
 // 作者：289371298 upgraded from zhouhy
 // https://www.botzone.org.cn/games/Tank2
 
+#include <cassert>
 #include <cstring>
 #include <ctime>
 #include <iostream>
@@ -232,6 +233,45 @@ public:
     {
         return ActionIsShoot(previousActions[currentTurn - 1][side][tank]);
     }
+
+    // 判断位于同一水平线或垂直线上的两点间(不包含该两点)，除了items所包含的物件外，没有其他物件。
+    bool ifPathOnlyInclude(int ax, int ay, int bx, int by, int items)
+    {
+#ifdef DEBUG
+        assert(ax == bx || ay == by);
+#endif
+        if (ax == bx)
+        {
+            for (int y = ay + ((ay < by) ? 1 : -1);
+                 (ay < by) ? (y < by) : (y > by);
+                 (ay < by) ? (y++) : (y--))
+            {
+                if ((gameField[y][ax] & (~items)) != 0)
+                    return false;
+            }
+        }
+        else
+        {
+            for (int x = ax + ((ax < bx) ? 1 : -1);
+                 (ax < bx) ? (x < bx) : (x > bx);
+                 (ax < bx) ? (x++) : (x--))
+            {
+                if ((gameField[ay][x] & (~items)) != 0)
+                    return false;
+            }
+        }
+        return true;
+    }
+
+    /* Action ExtractShootAction(int from_x, int from_y, int to_x, int to_y)
+    {
+#ifdef DEBUG
+        assert(from_x == to_x || from_y == to_y);
+#endif
+        if (from_x == to_x)
+        {if(from_y<to_y)
+        }
+    } */
 
     // 判断行为是否合法（出界或移动到非空格子算作非法）
     // 未考虑坦克是否存活
@@ -820,6 +860,7 @@ enum AgentState
 #define TANK_CNT 2
 #define INF 0x7fffffff
 #include <set>
+#include <utility>
 
 class HeadQuarter
 {
@@ -830,20 +871,17 @@ public:
 
     // Take action
     Action takeAction(int tank_id);
-    // State transition happens here.
-    bool changeState(int tank_id);
 
     // EXPLORE
     Action Explore(int tank_id);
     // for A* algorithm, f = g(real) + h(estimate)
-    bool first_move[TANK_CNT];
-    void A_search(int tank_id, int dst_x, int dst_y);
+    void A_search(int side, int tank_id, int dst_x, int dst_y);
     int getEstimateScore(int x, int y, int dst_x, int dst_y);
-    int g_score[TANK_CNT][fieldHeight][fieldWidth];
-    int h_score[TANK_CNT][fieldHeight][fieldWidth];
-    int pfather[TANK_CNT][fieldHeight][fieldWidth];
+
     deque<int> next_loc_x[TANK_CNT];
     deque<int> next_loc_y[TANK_CNT];
+    deque<int> e_next_loc_x[TANK_CNT];
+    deque<int> e_next_loc_y[TANK_CNT];
 
     // Attack
     Action Attack(int tank_id);
@@ -851,43 +889,63 @@ public:
     // aim[i] marks the idx of the enemy tank that
     // tank i of our side aims at
     vector<int> aim[TANK_CNT];
+    int prior_aim[TANK_CNT];
 
     // Defend
     Action Defend(int tank_id);
+
+    // set danger[fieldHeight][fieldWidth]
+    void getDangerousArea();
+
+    // set next_loc_x, next_loc_y, e_next_loc_x and e_next_loc_y
+    // using A_search()
+    void getBothRoutes();
+
+    // set prior_aim[TANK_CNT]
+    void getPriorAim();
 
     HeadQuarter()
     {
         cur_state[0] = EXPLORE;
         cur_state[1] = EXPLORE;
-        first_move[0] = true;
-        first_move[1] = true;
         has_shoot[0] = false;
         has_shoot[1] = false;
     }
 
 private:
+    int g_score[fieldHeight][fieldWidth];
+    int h_score[fieldHeight][fieldWidth];
+    int pfather[fieldHeight][fieldWidth];
+
+    // if within the shooting range of enemy tanks
+    // 0: no
+    // 1: yes, enemy tank0
+    // 2: yes, enemy tank1
+    // 3: yes, both
+    int danger[fieldHeight][fieldWidth];
+
     int getManhattenDist(int x, int y, int dst_x, int dst_y)
     {
         return abs(dst_x - x) + abs(dst_y - y);
     }
+
+    // State transition happens here.
+    bool changeState(int tank_id);
+
+    pair<int, Action> PerceiveEnv(int tank_id, int e_tank_id);
 };
 
 bool HeadQuarter::changeState(int tank_id)
 {
-    int dist1, dist2;
-    int i = tank_id;
-    // change to attack: if enemy tank is close
-    dist1 = getManhattenDist(field->tankX[mySide][i], field->tankY[mySide][i],
-                             field->tankX[otherSide][0], field->tankY[otherSide][0]);
-    dist2 = getManhattenDist(field->tankX[mySide][i], field->tankY[mySide][i],
-                             field->tankX[otherSide][1], field->tankY[otherSide][1]);
-    if (dist2 <= 2 || dist1 <= 2)
+
+    /* if (dist2 <= 2 || dist1 <= 2)
     {
         aim[i].push_back(((dist1 < dist2) ? 0 : 1));
         cur_state[i] = ATTACK;
         return true;
-    }
+    } */
 
+    int dist1, dist2;
     // defend: if enemy tank is close to our base
     dist1 = getManhattenDist(baseX[mySide], baseY[mySide],
                              field->tankX[otherSide][0], field->tankY[otherSide][0]);
@@ -895,18 +953,18 @@ bool HeadQuarter::changeState(int tank_id)
                              field->tankX[otherSide][1], field->tankY[otherSide][1]);
     if (dist2 <= 2 || dist1 <= 2)
     {
-        aim[i].push_back(((dist1 < dist2) ? 0 : 1));
-        cur_state[i] = DEFEND;
+        aim[tank_id].push_back(((dist1 < dist2) ? 0 : 1));
+        cur_state[tank_id] = DEFEND;
         return true;
     }
 
     // back to explore: if enemy tank is destroyed
-    if ((cur_state[i] == DEFEND || cur_state[i] == ATTACK) &&
-        field->tankX[otherSide][aim[i][0]] == -1)
+    if ((cur_state[tank_id] == DEFEND || cur_state[tank_id] == ATTACK) &&
+        field->tankX[otherSide][aim[tank_id][0]] == -1)
     {
         ///??? 为啥用vector
-        aim[i].erase(aim[i].begin());
-        cur_state[i] = EXPLORE;
+        aim[tank_id].erase(aim[tank_id].begin());
+        cur_state[tank_id] = EXPLORE;
     }
     return true;
 }
@@ -919,42 +977,47 @@ Action HeadQuarter::takeAction(int tank_id)
 #ifdef DEBUG
     cout << "Shot state of " << tank_id << " is " << has_shoot[tank_id] << endl;
 #endif
-    changeState(tank_id);
     if (!field->tankAlive[mySide][tank_id])
         return Stay;
-    Action to_take;
-    switch (cur_state[tank_id])
+    Action to_take = Stay;
+    int mx = field->tankX[mySide][tank_id];
+    int my = field->tankY[mySide][tank_id];
+    auto ret0 = PerceiveEnv(tank_id, 0);
+    auto ret1 = PerceiveEnv(tank_id, 1);
+
+    if (ret0.first == 6 && ret1.first == 6)
     {
-    case EXPLORE:
-        to_take = Explore(tank_id);
-        break;
-    case ATTACK:
-        to_take = Attack(tank_id);
-        break;
-    case DEFEND:
-        to_take = Defend(tank_id);
-        break;
-    default:
-        to_take = Stay;
-        break;
+        cur_state[tank_id] = EXPLORE;
+    }
+    else if (ret0.first == 1 || ret1.first == 1)
+    {
+#ifdef DEBUG
+        assert(danger[my][mx] != 0);
+#endif
+        if (danger[my][mx] == 1)
+            to_take = ret0.second;
+        else if (danger[my][mx] == 2)
+            to_take = ret1.second;
+        else
+            to_take = prior_aim[tank_id] == 0 ? ret0.second : ret1.second;
     }
 
     // Shooting twice is prohibited.
-    if (!ActionIsShoot(to_take))
-        has_shoot[tank_id] = false;
-    else
+    if (ActionIsShoot(to_take))
     {
         if (has_shoot[tank_id])
-        {
-            to_take = Stay;
-            has_shoot[tank_id] = false;
-        }
+            cur_state[tank_id] = EXPLORE;
         else
-            has_shoot[tank_id] = true;
+            cur_state[tank_id] = ATTACK;
     }
+
+    if (cur_state[tank_id] == EXPLORE)
+        to_take = Explore(tank_id);
+
 #ifdef DEBUG
     cout << "Shot state of " << tank_id << " is " << has_shoot[tank_id] << endl;
 #endif
+    has_shoot[tank_id] = ActionIsShoot(to_take) ? true : false;
     return to_take;
 }
 
@@ -967,7 +1030,95 @@ int HeadQuarter::getEstimateScore(int x, int y, int dst_x, int dst_y)
     return getManhattenDist(x, y, dst_x, dst_y);
 }
 
-void HeadQuarter::A_search(int tank_id, int dst_x, int dst_y)
+void HeadQuarter::getDangerousArea()
+{
+    memset(danger, 0, sizeof(danger));
+    for (int e_tank_id = 0; e_tank_id < tankPerSide; e_tank_id++)
+    {
+        if (!field->HasShoot(otherSide, e_tank_id))
+        {
+            int x0 = field->tankX[otherSide][e_tank_id];
+            int y0 = field->tankY[otherSide][e_tank_id];
+            for (int x = x0 + 1; x < fieldWidth; ++x)
+            {
+                if (field->gameField[y0][x] == Water)
+                    continue;
+                if ((field->gameField[y0][x] & (~(Water | Blue0 | Blue1 | Red0 | Red1))) != 0)
+                    break;
+                danger[y0][x] += e_tank_id + 1;
+            }
+            for (int x = x0 - 1; x >= 0; --x)
+            {
+                if (field->gameField[y0][x] == Water)
+                    continue;
+                if ((field->gameField[y0][x] & (~(Water | Blue0 | Blue1 | Red0 | Red1))) != 0)
+                    break;
+                danger[y0][x] += e_tank_id + 1;
+            }
+            for (int y = y0 + 1; y < fieldHeight; ++y)
+            {
+                if (field->gameField[y][x0] == Water)
+                    continue;
+                if ((field->gameField[y][x0] & (~(Water | Blue0 | Blue1 | Red0 | Red1))) != 0)
+                    break;
+                danger[y][x0] += e_tank_id + 1;
+            }
+            for (int y = y0 - 1; y >= 0; --y)
+            {
+                if (field->gameField[y][x0] == Water)
+                    continue;
+                if ((field->gameField[y][x0] & (~(Water | Blue0 | Blue1 | Red0 | Red1))) != 0)
+                    break;
+                danger[y][x0] += e_tank_id + 1;
+            }
+        }
+    }
+}
+
+void HeadQuarter::getBothRoutes()
+{
+    for (int tank_id = 0; tank_id < tankPerSide; tank_id++)
+    {
+        if (field->tankAlive[mySide][tank_id])
+            A_search(mySide, tank_id, baseX[otherSide], baseY[otherSide]);
+        if (field->tankAlive[otherSide][tank_id])
+            A_search(otherSide, tank_id, baseX[mySide], baseY[mySide]);
+    }
+}
+
+void HeadQuarter::getPriorAim()
+{
+    int dist[2] = {INF, INF};
+    int new_dist[2];
+    int delta[2] = {INF, INF};
+    for (int tank = 0; tank < tankPerSide; tank++)
+    {
+        if (!field->tankAlive[mySide][tank])
+            continue;
+        int x = field->tankX[mySide][tank];
+        int y = field->tankY[mySide][tank];
+        int new_x = next_loc_x[tank].front();
+        int new_y = next_loc_y[tank].front();
+        for (int e_tank = 0; e_tank < tankPerSide; e_tank++)
+        {
+            if (!field->tankAlive[otherSide][e_tank])
+                continue;
+            int ex = field->tankX[otherSide][e_tank];
+            int ey = field->tankY[otherSide][e_tank];
+            int new_ex = e_next_loc_x[e_tank].front();
+            int new_ey = e_next_loc_y[e_tank].front();
+            dist[e_tank] = getManhattenDist(x, y, ex, ey);
+            new_dist[e_tank] = getManhattenDist(new_x, new_y, new_ex, new_ey);
+            delta[e_tank] = new_dist[e_tank] - dist[e_tank];
+        }
+        if (dist[0] <= 3 || dist[1] <= 3)
+            prior_aim[tank] = dist[0] <= dist[1] ? 0 : 1;
+        else
+            prior_aim[tank] = delta[0] <= delta[1] ? 0 : 1;
+    }
+}
+
+void HeadQuarter::A_search(int side, int tank_id, int dst_x, int dst_y)
 {
     /*
     Implementation of A * search algorithm. Faster than BFS and can be adaptive.
@@ -980,33 +1131,35 @@ void HeadQuarter::A_search(int tank_id, int dst_x, int dst_y)
             need sophisticated guess or estimate.
     the select path is stored in next_loc_{xy}
     */
-    mySide = field->mySide;
-    int x0 = field->tankX[mySide][tank_id];
-    int y0 = field->tankY[mySide][tank_id];
+    memset(g_score, 0, sizeof(g_score));
+    memset(h_score, 0, sizeof(h_score));
+    memset(pfather, 0, sizeof(pfather));
+    int x0 = field->tankX[side][tank_id];
+    int y0 = field->tankY[side][tank_id];
     set<pair<int, int>> open_list, close_list;
     open_list.insert(make_pair(x0, y0));
-    g_score[tank_id][y0][x0] = 0;
-    h_score[tank_id][y0][x0] = getEstimateScore(x0, y0, dst_x, dst_y);
-    pfather[tank_id][y0][x0] = -1;
+    g_score[y0][x0] = 0;
+    h_score[y0][x0] = getEstimateScore(x0, y0, dst_x, dst_y);
+    pfather[y0][x0] = -1;
 
     bool success = false;
+    bool first_loop = true;
     while (true)
     {
-
         auto min_loc = open_list.begin();
         int min_f = INF;
         for (auto it = open_list.begin(); it != open_list.end(); ++it)
         {
             int x = it->first, y = it->second;
-            if (g_score[tank_id][y][x] + h_score[tank_id][y][x] < min_f)
+            if (g_score[y][x] + h_score[y][x] < min_f)
             {
                 min_loc = it;
-                min_f = g_score[tank_id][y][x] + h_score[tank_id][y][x];
+                min_f = g_score[y][x] + h_score[y][x];
             }
         }
+        int x = min_loc->first, y = min_loc->second;
         close_list.insert(*min_loc);
         open_list.erase(*min_loc);
-        int x = min_loc->first, y = min_loc->second;
 
         for (int i = 0; i < 4; ++i)
         {
@@ -1014,35 +1167,37 @@ void HeadQuarter::A_search(int tank_id, int dst_x, int dst_y)
             int _y = y + dy[i];
             if (_x < 0 || _y < 0 || _x >= fieldWidth || _y >= fieldHeight)
                 continue;
-
+            if (first_loop && side == mySide)
+            {
+                if (danger[_y][_x] != 0)
+                    continue;
+                if (danger[y][x] != 0 && (field->gameField[_y][_x] & Brick) != 0)
+                    continue;
+            }
             if (close_list.find(make_pair(_x, _y)) != close_list.end() ||
                 (field->gameField[_y][_x] & (Steel | Water)) != 0 ||
-                (_y == baseY[mySide] && _x == baseX[mySide]))
-            { //in close list or can't reach
-
+                (_y == baseY[side] && _x == baseX[side])) //in close list or can't reach
                 continue;
-            }
             if (open_list.find(make_pair(_x, _y)) == open_list.end())
             {
-
                 open_list.insert(make_pair(_x, _y));
-
-                pfather[tank_id][_y][_x] = (i + 2) % 4;
-                h_score[tank_id][_y][_x] = getEstimateScore(_x, _y, dst_x, dst_y);
-                g_score[tank_id][_y][_x] = ((field->gameField[_y][_x] == Brick) ? 2 : 1) +
-                                           g_score[tank_id][y][x];
+                pfather[_y][_x] = (i + 2) % 4;
+                h_score[_y][_x] = getEstimateScore(_x, _y, dst_x, dst_y);
+                g_score[_y][_x] = ((field->gameField[_y][_x] == Brick) ? 2 : 1) +
+                                  g_score[y][x];
             }
             else
             {
-
-                if (g_score[tank_id][_y][_x] > ((field->gameField[_y][_x] == Brick) ? 2 : 1) + g_score[tank_id][y][x])
+                if (g_score[_y][_x] > ((field->gameField[_y][_x] == Brick) ? 2 : 1) + g_score[y][x])
                 {
-                    g_score[tank_id][_y][_x] = ((field->gameField[_y][_x] == Brick) ? 2 : 1) + g_score[tank_id][y][x];
-                    h_score[tank_id][_y][_x] = getEstimateScore(_x, _y, dst_x, dst_y);
-                    pfather[tank_id][_y][_x] = (i + 2) % 4;
+                    pfather[_y][_x] = (i + 2) % 4;
+                    h_score[_y][_x] = getEstimateScore(_x, _y, dst_x, dst_y);
+                    g_score[_y][_x] = ((field->gameField[_y][_x] == Brick) ? 2 : 1) + g_score[y][x];
                 }
             }
         }
+        first_loop = false;
+
         if (open_list.find(make_pair(dst_x, dst_y)) != open_list.end())
         {
             success = true;
@@ -1054,23 +1209,44 @@ void HeadQuarter::A_search(int tank_id, int dst_x, int dst_y)
             break;
         }
     }
+
     if (success)
     {
+        if (side == mySide)
+        {
+            next_loc_x[tank_id].clear();
+            next_loc_y[tank_id].clear();
+        }
+        else
+        {
+            e_next_loc_x[tank_id].clear();
+            e_next_loc_y[tank_id].clear();
+        }
         int xx = dst_x, yy = dst_y;
-
         while (xx != x0 || yy != y0)
         {
+            if (side == mySide)
+            {
+                next_loc_x[tank_id].push_front(xx);
+                next_loc_y[tank_id].push_front(yy);
+            }
+            else
+            {
+                e_next_loc_x[tank_id].push_front(xx);
+                e_next_loc_y[tank_id].push_front(yy);
+            }
             int tmp_x = xx, tmp_y = yy;
-            next_loc_x[tank_id].push_front(xx);
-            next_loc_y[tank_id].push_front(yy);
-            xx = xx + dx[pfather[tank_id][tmp_y][tmp_x]];
-            yy = yy + dy[pfather[tank_id][tmp_y][tmp_x]];
+            xx = xx + dx[pfather[tmp_y][tmp_x]];
+            yy = yy + dy[pfather[tmp_y][tmp_x]];
         }
 #ifdef DEBUG
         cout << "A search succeeded." << endl;
         for (int i = 0; i < next_loc_x[tank_id].size(); ++i)
         {
-            cout << next_loc_x[tank_id][i] << ',' << next_loc_y[tank_id][i] << endl;
+            if (side == mySide)
+                cout << next_loc_x[tank_id][i] << ',' << next_loc_y[tank_id][i] << endl;
+            else
+                cout << e_next_loc_x[tank_id][i] << ',' << e_next_loc_y[tank_id][i] << endl;
         }
 #endif
     }
@@ -1080,21 +1256,10 @@ void HeadQuarter::A_search(int tank_id, int dst_x, int dst_y)
         cout << "A search failed." << endl;
     }
 #endif
-    memset(g_score, 0, sizeof(g_score));
-    memset(h_score, 0, sizeof(h_score));
-    memset(pfather, 0, sizeof(pfather));
-}
+} // namespace TankGame
 
 Action HeadQuarter::Explore(int tank_id)
 {
-    // 10%的概率下，重新用A*算法搜路(把刚墙和水域视为不可入的)。
-    // 若搜得路径的下一步是砖或者敌方基地，射击；若为空地，行走；其他情况，不动。
-    if (first_move[tank_id] || (rand() % 100) > 90)
-    {
-        A_search(tank_id, baseX[otherSide], baseY[otherSide]);
-        first_move[tank_id] = false;
-    }
-
     int x0 = field->tankX[mySide][tank_id];
     int y0 = field->tankY[mySide][tank_id];
     int next_x = next_loc_x[tank_id].front();
@@ -1111,11 +1276,13 @@ Action HeadQuarter::Explore(int tank_id)
     }
 
     if ((field->gameField[next_y][next_x] & (Brick | Base)) != 0)
-    {                                   ///??? A star 把刚墙和水域视为不可入的了吗？
-                                        ///??? 有可能打到自己的基地或清除自己基地旁边的保护墙吗？
-        return (Action)(next_move + 4); // shoot
+    {
+        if (has_shoot[tank_id])
+            return Stay;
+        else
+            return (Action)(next_move + 4);
     }
-    else if (field->gameField[next_y][next_x] == None)
+    else if ((field->gameField[next_y][next_x] & (~(Blue0 | Blue1 | Red0 | Red1))) == 0)
     {
         next_loc_x[tank_id].pop_front();
         next_loc_y[tank_id].pop_front();
@@ -1125,6 +1292,103 @@ Action HeadQuarter::Explore(int tank_id)
     {
         return Stay;
     }
+}
+
+// Decide if to shoot (assume has_shoot[tank_id]==false)
+// If two tanks coincide, don't shoot and return (0, any_action);
+// If my tank can shoot at the enemy tank directly, return (1, shoot_action);
+// If there is only one brick between the two face-to-face tanks, don't shoot and return (2, any_action);
+// If two tanks depart from each other for exactly 1 block in both x and y direction, return (3, any_action);
+// If two tanks depart from each other for exactly 1 block in x direction, return (4, any_action);
+// If two tanks depart from each other for exactly 1 block in y direction, return (5, any_action);
+// If my tank can't shoot at the enemy tank within 2 rounds, or my tank won't be in threat within 2 rounds,
+//    return (6, any_action) and switch to Explore mode after this function.
+pair<int, Action> HeadQuarter::PerceiveEnv(int tank_id, int e_tank_id)
+{
+    int mx = field->tankX[mySide][tank_id];
+    int my = field->tankY[mySide][tank_id];
+    int ex = field->tankX[otherSide][e_tank_id];
+    int ey = field->tankY[otherSide][e_tank_id];
+    if (abs(mx - ex) > 1 && abs(my - ey) > 1)
+    {
+        return make_pair(6, Stay);
+    }
+    if (mx == ex && my == ey)
+    {
+        return make_pair(0, Stay);
+    }
+    if (mx == ex)
+    {
+        int brick_cnt = 0;
+        bool dont_shoot = false;
+        // look up items along the shoot path (no including the ending points)
+        for (int y = my + ((my < ey) ? 1 : -1);
+             (my < ey) ? (y < ey) : (y > ey);
+             (my < ey) ? (y++) : (y--))
+        {
+            // assume no Base
+            if ((field->gameField[y][mx] &
+                 (Steel | tankItemTypes[mySide][(tank_id + 1) % 2] |
+                  tankItemTypes[otherSide][(e_tank_id + 1) % 2])) != 0)
+            {
+                dont_shoot = true;
+                break;
+            }
+            if ((field->gameField[y][mx] & Brick) != 0)
+                brick_cnt++;
+        }
+        if (dont_shoot || brick_cnt > 2)
+            return make_pair(6, Stay);
+        else if (brick_cnt == 0)
+            return make_pair(1, my < ey ? DownShoot : UpShoot);
+        else if (brick_cnt == 1)
+            return make_pair(2, Stay);
+        else // brick_cnt==2
+        {
+            // TODO
+            return make_pair(6, Stay);
+        }
+    }
+    if (my == ey)
+    {
+        int brick_cnt = 0;
+        bool dont_shoot = false;
+        // look up items along the shoot path (no including the ending points)
+        for (int x = mx + ((mx < ex) ? 1 : -1);
+             (mx < ex) ? (x < ex) : (x > ex);
+             (mx < ex) ? (x++) : (x--))
+        {
+            // assume no Base
+            if ((field->gameField[my][x] &
+                 (Steel | tankItemTypes[mySide][(tank_id + 1) % 2] |
+                  tankItemTypes[otherSide][(e_tank_id + 1) % 2])) != 0)
+            {
+                dont_shoot = true;
+                break;
+            }
+            if ((field->gameField[my][x] & Brick) != 0)
+                brick_cnt++;
+        }
+        if (dont_shoot || brick_cnt > 2)
+            return make_pair(6, Stay);
+        else if (brick_cnt == 0)
+            return make_pair(1, mx < ex ? RightShoot : LeftShoot);
+        else if (brick_cnt == 1)
+            return make_pair(2, Stay);
+        else // brick_cnt==2
+        {
+            // TODO
+            return make_pair(6, Stay);
+        }
+    }
+    if (abs(mx - ex) == 1 && abs(my - ey) == 1)
+    {
+        return make_pair(3, Stay);
+    }
+    if (abs(mx - ex) == 1)
+        return make_pair(4, Stay);
+    else
+        return make_pair(5, Stay);
 }
 
 Action HeadQuarter::inShootRange(int tank_id, int e_tank_id)
@@ -1183,7 +1447,7 @@ Action HeadQuarter::Attack(int tank_id)
 
 Action HeadQuarter::Defend(int tank_id)
 {
-    A_search(tank_id, baseX[mySide], baseY[mySide]);
+    A_search(mySide, tank_id, baseX[mySide], baseY[mySide]);
 
     int x0 = field->tankX[mySide][tank_id];
     int y0 = field->tankY[mySide][tank_id];
@@ -1244,7 +1508,12 @@ int main()
         {
             TankGame::ReadInput_longlive(cin);
         }
-        TankGame::SubmitAndDontExit(TankGame::hq->takeAction(0), TankGame::hq->takeAction(1));
+
+        TankGame::hq->getDangerousArea();
+        TankGame::hq->getBothRoutes();
+        TankGame::Action act0 = TankGame::hq->takeAction(0);
+        TankGame::Action act1 = TankGame::hq->takeAction(1);
+        TankGame::SubmitAndDontExit(act0, act1);
         cout << flush;
     }
 #ifdef DEBUG
