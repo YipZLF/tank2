@@ -227,6 +227,12 @@ public:
     // 本回合双方即将执行的动作，需要手动填入
     Action nextAction[sideCount][tankPerSide] = {{Invalid, Invalid}, {Invalid, Invalid}};
 
+    // 上回合是否射击
+    bool HasShoot(int side, int tank)
+    {
+        return ActionIsShoot(previousActions[currentTurn - 1][side][tank]);
+    }
+
     // 判断行为是否合法（出界或移动到非空格子算作非法）
     // 未考虑坦克是否存活
     bool ActionIsValid(int side, int tank, Action act)
@@ -795,6 +801,7 @@ Action RandAction(int tank)
 
 Action RandActionExcept(int tank, Action exc)
 {
+    // TODO: 是否会出现死循环？
     while (true)
     {
         Action act = RandAction(tank);
