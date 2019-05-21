@@ -1317,8 +1317,7 @@ Action HeadQuarter::Explore(int tank_id)
             }
             fieldFlags[y][x] = 1;
         }
-        else if (getManhattenDist(mx, my, baseX[otherSide], baseY[otherSide]) >=
-                 getManhattenDist(_mx, _my, baseX[otherSide], baseY[otherSide]))
+        else if (next_loc_x[tank_id].front() == _mx && next_loc_y[tank_id].front() == _my)
         {
             if (field->gameField[_my][_mx] == None)
             {
