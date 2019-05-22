@@ -1350,8 +1350,7 @@ Action HeadQuarter::Explore(int tank_id)
             }
             fieldFlags[y][x] = 1;
         }
-        else if (getManhattenDist(mx, my, baseX[otherSide], baseY[otherSide]) >=
-                 getManhattenDist(_mx, _my, baseX[otherSide], baseY[otherSide]))
+        else if (next_dir[tank_id].front() == dir)
         {
             if (field->gameField[_my][_mx] == None)
             {
@@ -1368,11 +1367,8 @@ Action HeadQuarter::Explore(int tank_id)
 
     A_search(mySide, tank_id, baseX[otherSide], baseY[otherSide], prohibited_shoots);
 
-    int x0 = field->tankX[mySide][tank_id];
-    int y0 = field->tankY[mySide][tank_id];
     int next_x = next_loc_x[tank_id].front();
     int next_y = next_loc_y[tank_id].front();
-
     int dir = next_dir[tank_id].front();
 
     if ((field->gameField[next_y][next_x] & (Brick | Base)) != 0)
