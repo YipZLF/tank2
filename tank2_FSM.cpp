@@ -896,6 +896,7 @@ public:
 
     deque<int> next_loc_x[TANK_CNT];
     deque<int> next_loc_y[TANK_CNT];
+    deque<int> next_dir[TANK_CNT];
     deque<int> e_next_loc_x[TANK_CNT];
     deque<int> e_next_loc_y[TANK_CNT];
 
@@ -1246,6 +1247,7 @@ void HeadQuarter::A_search(int side, int tank_id, int dst_x, int dst_y,
         {
             next_loc_x[tank_id].clear();
             next_loc_y[tank_id].clear();
+            next_dir[tank_id].clear();
         }
         else
         {
@@ -1265,9 +1267,10 @@ void HeadQuarter::A_search(int side, int tank_id, int dst_x, int dst_y,
                 e_next_loc_x[tank_id].push_front(xx);
                 e_next_loc_y[tank_id].push_front(yy);
             }
-            int tmp_x = xx, tmp_y = yy;
-            xx = xx + dx[pfather[tmp_y][tmp_x]];
-            yy = yy + dy[pfather[tmp_y][tmp_x]];
+            int reversed_dir = pfather[yy][xx];
+            next_dir[tank_id].push_front((reversed_dir + 2) % 4);
+            xx = xx + dx[reversed_dir];
+            yy = yy + dy[reversed_dir];
         }
 #ifdef DEBUG
         cout << "A search succeeded." << endl;
