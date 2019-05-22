@@ -1320,7 +1320,7 @@ Action HeadQuarter::Explore(int tank_id)
             }
             fieldFlags[y][x] = 1;
         }
-        else if (next_loc_x[tank_id].front() == _mx && next_loc_y[tank_id].front() == _my)
+        else if (next_dir[tank_id].front() == dir)
         {
             if (field->gameField[_my][_mx] == None)
             {
@@ -1373,28 +1373,39 @@ Action HeadQuarter::Explore(int tank_id)
     int next_x = next_loc_x[tank_id].front();
     int next_y = next_loc_y[tank_id].front();
 
-    int next_move = 0;
-    for (int i = 0; i < 4; ++i)
-    {
-        if ((x0 + dx[i] == next_x) && (y0 + dy[i] == next_y))
-        {
-            next_move = i;
-            break;
-        }
-    }
+    int dir = next_dir[tank_id].front();
 
     if ((field->gameField[next_y][next_x] & (Brick | Base)) != 0)
     {
         if (has_shoot[tank_id])
             return Stay;
         else
-            return (Action)(next_move + 4);
+            return (Action)(dir + 4);
     }
-    else if ((field->gameField[next_y][next_x] & (~(Blue0 | Blue1 | Red0 | Red1))) == 0)
+    else if (field->gameField[next_y][next_x] == None)
     {
+        if (!has_shoot[tank_id])
+        {
+            int xx = next_x, yy = next_y;
+            for (int i = 1; i < next_dir[tank_id].size(); i++)
+            {
+                if (next_dir[tank_id][i] != dir)
+                    break;
+                xx = next_loc_x[tank_id][i];
+                yy = next_loc_y[tank_id][i];
+                if (field->gameField[yy][xx] == None)
+                    continue;
+                else if ((field->gameField[yy][xx] & Brick) != 0 ||
+                         (xx == baseX[otherSide] && yy == baseY[otherSide]))
+                    return (Action)(dir + 4);
+                else
+                    break;
+            }
+        }
         next_loc_x[tank_id].pop_front();
         next_loc_y[tank_id].pop_front();
-        return (Action)next_move;
+        next_dir[tank_id].pop_front();
+        return (Action)dir;
     }
     else
     {
