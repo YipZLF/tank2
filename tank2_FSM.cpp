@@ -17,7 +17,7 @@
 #include "jsoncpp/json.h"
 #endif
 
-//#define DEBUG
+#define DEBUG
 
 using std::cin;
 using std::cout;
@@ -899,6 +899,7 @@ public:
     deque<int> next_dir[TANK_CNT];
     deque<int> e_next_loc_x[TANK_CNT];
     deque<int> e_next_loc_y[TANK_CNT];
+    deque<int> e_next_dir[TANK_CNT];
 
     // Attack
     Action Attack(int tank_id);
@@ -1011,14 +1012,11 @@ Action HeadQuarter::takeAction(int tank_id)
 
     if (env0.first == 1 || env1.first == 1)
     {
-#ifdef DEBUG
-        assert(danger[my][mx] != 0);
-#endif
         if (danger[my][mx] == 1)
             to_take = env0.second;
         else if (danger[my][mx] == 2)
             to_take = env1.second;
-        else
+        else //danger[my][mx] ==0 or 3
             to_take = prior_aim[tank_id] == 0 ? env0.second : env1.second;
     }
 
@@ -1117,16 +1115,16 @@ void HeadQuarter::getPriorAim()
             continue;
         int x = field->tankX[mySide][tank];
         int y = field->tankY[mySide][tank];
-        int new_x = next_loc_x[tank].front();
-        int new_y = next_loc_y[tank].front();
+        int new_x = next_dir[tank].empty() ? x : next_loc_x[tank].front();
+        int new_y = next_dir[tank].empty() ? y : next_loc_y[tank].front();
         for (int e_tank = 0; e_tank < tankPerSide; e_tank++)
         {
             if (!field->tankAlive[otherSide][e_tank])
                 continue;
             int ex = field->tankX[otherSide][e_tank];
             int ey = field->tankY[otherSide][e_tank];
-            int new_ex = e_next_loc_x[e_tank].front();
-            int new_ey = e_next_loc_y[e_tank].front();
+            int new_ex = e_next_dir[tank].empty() ? ex : e_next_loc_x[e_tank].front();
+            int new_ey = e_next_dir[tank].empty() ? ey : e_next_loc_y[e_tank].front();
             dist[e_tank] = getManhattenDist(x, y, ex, ey);
             new_dist[e_tank] = getManhattenDist(new_x, new_y, new_ex, new_ey);
             delta[e_tank] = new_dist[e_tank] - dist[e_tank];
@@ -1138,6 +1136,7 @@ void HeadQuarter::getPriorAim()
     }
 }
 
+// If no path exists, leave next_loc_{xy} and next_dir as empty
 void HeadQuarter::A_search(int side, int tank_id, int dst_x, int dst_y,
                            const set<int> &prohibited_shoots)
 {
@@ -1196,7 +1195,7 @@ void HeadQuarter::A_search(int side, int tank_id, int dst_x, int dst_y,
                 continue;
             if (first_loop && side == mySide)
             {
-                if (danger[_y][_x] != 0)
+                if (danger[_y][_x] != 0 && (field->gameField[_y][_x] == None))
                     continue;
                 if (danger[y][x] != 0 && (field->gameField[_y][_x] & Brick) != 0)
                     continue;
@@ -1241,19 +1240,21 @@ void HeadQuarter::A_search(int side, int tank_id, int dst_x, int dst_y,
         }
     }
 
+    if (side == mySide)
+    {
+        next_loc_x[tank_id].clear();
+        next_loc_y[tank_id].clear();
+        next_dir[tank_id].clear();
+    }
+    else
+    {
+        e_next_loc_x[tank_id].clear();
+        e_next_loc_y[tank_id].clear();
+        e_next_dir[tank_id].clear();
+    }
+
     if (success)
     {
-        if (side == mySide)
-        {
-            next_loc_x[tank_id].clear();
-            next_loc_y[tank_id].clear();
-            next_dir[tank_id].clear();
-        }
-        else
-        {
-            e_next_loc_x[tank_id].clear();
-            e_next_loc_y[tank_id].clear();
-        }
         int xx = dst_x, yy = dst_y;
         while (xx != x0 || yy != y0)
         {
@@ -1268,7 +1269,10 @@ void HeadQuarter::A_search(int side, int tank_id, int dst_x, int dst_y,
                 e_next_loc_y[tank_id].push_front(yy);
             }
             int reversed_dir = pfather[yy][xx];
-            next_dir[tank_id].push_front((reversed_dir + 2) % 4);
+            if (side == mySide)
+                next_dir[tank_id].push_front((reversed_dir + 2) % 4);
+            else
+                e_next_dir[tank_id].push_front((reversed_dir + 2) % 4);
             xx = xx + dx[reversed_dir];
             yy = yy + dy[reversed_dir];
         }
@@ -1283,12 +1287,12 @@ void HeadQuarter::A_search(int side, int tank_id, int dst_x, int dst_y,
         }
 #endif
     }
-#ifdef DEBUG
     else
     {
+#ifdef DEBUG
         cout << "A search failed." << endl;
-    }
 #endif
+    }
 
     for (int y = 0; y < fieldHeight; y++)
         for (int x = 0; x < fieldWidth; x++)
@@ -1367,49 +1371,96 @@ Action HeadQuarter::Explore(int tank_id)
 
     A_search(mySide, tank_id, baseX[otherSide], baseY[otherSide], prohibited_shoots);
 
-    int next_x = next_loc_x[tank_id].front();
-    int next_y = next_loc_y[tank_id].front();
-    int dir = next_dir[tank_id].front();
-
-    if ((field->gameField[next_y][next_x] & (Brick | Base)) != 0)
+    if (next_dir[tank_id].empty()) // there is no route to enemy's base
     {
-        if (has_shoot[tank_id])
-            return Stay;
-        else
-            return (Action)(dir + 4);
-    }
-    else if (field->gameField[next_y][next_x] == None)
-    {
-        if (!has_shoot[tank_id])
+        // see if the tank is trapped
+        int tmp = INF;
+        int best_i, best_x, best_y;
+        for (int i = 0; i < 4; ++i)
         {
-            int xx = next_x, yy = next_y;
-            for (int i = 1; i < next_dir[tank_id].size(); i++)
+            int _x = mx + dx[i];
+            int _y = my + dy[i];
+            FieldItem _item = field->gameField[_y][_x];
+            if (_x < 0 || _y < 0 || _x >= fieldWidth || _y >= fieldHeight)
+                continue;
+            if (_item == None && danger[_y][_x])
+                continue;
+            if (_item == Brick &&
+                (danger[my][mx] || prohibited_shoots.count(i + 4)))
+                continue;
+            if ((_item & ~Brick) != 0) // can't reach
+                continue;
+            if ((_item == Brick ? 2 : 1) + getEstimateScore(_x, _y, baseX[otherSide], baseY[otherSide]) < tmp)
             {
-                if (next_dir[tank_id][i] != dir)
-                    break;
-                xx = next_loc_x[tank_id][i];
-                yy = next_loc_y[tank_id][i];
-                if (field->gameField[yy][xx] == None)
-                    continue;
-                else if ((field->gameField[yy][xx] & Brick) != 0 ||
-                         (xx == baseX[otherSide] && yy == baseY[otherSide]))
-                    return (Action)(dir + 4);
-                else
-                    break;
+                tmp = (_item == Brick ? 2 : 1) + getEstimateScore(_x, _y, baseX[otherSide], baseY[otherSide]);
+                best_i = i;
+                best_x = _x;
+                best_y = _y;
             }
         }
-        next_loc_x[tank_id].pop_front();
-        next_loc_y[tank_id].pop_front();
-        next_dir[tank_id].pop_front();
-        return (Action)dir;
+        if (tmp == INF)
+            return Stay;
+        int _x = mx + dx[best_i];
+        int _y = my + dy[best_i];
+        FieldItem _item = field->gameField[_y][_x];
+        if (_item == Brick)
+        {
+            if (has_shoot[tank_id])
+                return Stay;
+            else
+                return (Action)(best_i + 4);
+        }
+        else //_item == None
+        {
+            return (Action)best_i;
+        }
     }
-    else
+    else // there exists a route to enemy's base, and the route is stored in next_loc_{xy}
     {
-        return Stay;
+        int next_x = next_loc_x[tank_id].front();
+        int next_y = next_loc_y[tank_id].front();
+        int dir = next_dir[tank_id].front();
+
+        if ((field->gameField[next_y][next_x] & (Brick | Base)) != 0)
+        {
+            if (has_shoot[tank_id])
+                return Stay;
+            else
+                return (Action)(dir + 4);
+        }
+        else if (field->gameField[next_y][next_x] == None)
+        {
+            if (!has_shoot[tank_id])
+            {
+                int xx = next_x, yy = next_y;
+                for (int i = 1; i < next_dir[tank_id].size(); i++)
+                {
+                    if (next_dir[tank_id][i] != dir)
+                        break;
+                    xx = next_loc_x[tank_id][i];
+                    yy = next_loc_y[tank_id][i];
+                    if (field->gameField[yy][xx] == None)
+                        continue;
+                    else if ((field->gameField[yy][xx] & Brick) != 0 ||
+                             (xx == baseX[otherSide] && yy == baseY[otherSide]))
+                        return (Action)(dir + 4);
+                    else
+                        break;
+                }
+            }
+            next_loc_x[tank_id].pop_front();
+            next_loc_y[tank_id].pop_front();
+            next_dir[tank_id].pop_front();
+            return (Action)dir;
+        }
+        else
+        {
+            return Stay;
+        }
     }
 }
 
-// Decide if to shoot (assume has_shoot[tank_id]==false)
+// Decide if to shoot (Note! This function does not consider the value of has_shoot[tank_id])
 // If two tanks coincide, don't shoot and set (0, any_action);
 // If my tank can shoot at the enemy tank directly, set (1, shoot_action);
 // If there is only one brick between the two face-to-face tanks, don't shoot
@@ -1446,10 +1497,9 @@ void HeadQuarter::PerceiveEnv()
                      (my < ey) ? (y < ey) : (y > ey);
                      (my < ey) ? (y++) : (y--))
                 {
-                    // assume no Base
                     if ((field->gameField[y][mx] &
-                         (Steel | tankItemTypes[mySide][(tank_id + 1) % 2] |
-                          tankItemTypes[otherSide][(e_tank_id + 1) % 2])) != 0)
+                         (Steel | tankItemTypes[mySide][(tank_id + 1) % 2])) != 0 ||
+                        (mx == baseX[mySide] && y == baseY[mySide]))
                     {
                         dont_shoot = true;
                         break;
@@ -1457,17 +1507,12 @@ void HeadQuarter::PerceiveEnv()
                     if ((field->gameField[y][mx] & Brick) != 0)
                         brick_cnt++;
                 }
-                if (dont_shoot || brick_cnt > 2)
+                if (dont_shoot || brick_cnt > 1)
                     env[tank_id][e_tank_id] = make_pair(6, Stay);
                 else if (brick_cnt == 0)
                     env[tank_id][e_tank_id] = make_pair(1, my < ey ? DownShoot : UpShoot);
-                else if (brick_cnt == 1)
+                else //brick_cnt == 1
                     env[tank_id][e_tank_id] = make_pair(2, my < ey ? DownShoot : UpShoot);
-                else // brick_cnt==2
-                {
-                    // TODO
-                    env[tank_id][e_tank_id] = make_pair(6, Stay);
-                }
             }
             else if (my == ey)
             {
@@ -1480,8 +1525,8 @@ void HeadQuarter::PerceiveEnv()
                 {
                     // assume no Base
                     if ((field->gameField[my][x] &
-                         (Steel | tankItemTypes[mySide][(tank_id + 1) % 2] |
-                          tankItemTypes[otherSide][(e_tank_id + 1) % 2])) != 0)
+                         (Steel | tankItemTypes[mySide][(tank_id + 1) % 2])) != 0 ||
+                        (x == baseX[mySide] && my == baseY[mySide]))
                     {
                         dont_shoot = true;
                         break;
@@ -1489,17 +1534,12 @@ void HeadQuarter::PerceiveEnv()
                     if ((field->gameField[my][x] & Brick) != 0)
                         brick_cnt++;
                 }
-                if (dont_shoot || brick_cnt > 2)
+                if (dont_shoot || brick_cnt > 1)
                     env[tank_id][e_tank_id] = make_pair(6, Stay);
                 else if (brick_cnt == 0)
                     env[tank_id][e_tank_id] = make_pair(1, mx < ex ? RightShoot : LeftShoot);
-                else if (brick_cnt == 1)
+                else //brick_cnt == 1
                     env[tank_id][e_tank_id] = make_pair(2, mx < ex ? RightShoot : LeftShoot);
-                else // brick_cnt==2
-                {
-                    // TODO
-                    env[tank_id][e_tank_id] = make_pair(6, Stay);
-                }
             }
             else if (abs(mx - ex) == 1 && abs(my - ey) == 1)
             {
@@ -1614,7 +1654,7 @@ int main()
 #ifdef DEBUG
     cout << TankGame::field->mySide << endl;
     TankGame::field->DebugPrint();
-    TankGame::hq->A_search(1);
-    TankGame::hq->A_search(0);
+    //TankGame::hq->A_search(1);
+    //TankGame::hq->A_search(0);
 #endif
 }
