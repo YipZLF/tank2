@@ -163,6 +163,20 @@ inline int ExtractDirectionFromAction(Action x)
     return -1;
 }
 
+// 获得两地相对方向
+// -2：不在一条直线上；-1: 重合；0~3：上右下左
+int ExtractDirectionFromSites(int from_x, int from_y, int to_x, int to_y)
+{
+    if (from_x != to_x && from_y != to_y)
+        return -2;
+    else if (from_x == to_x && from_y == to_y)
+        return -1;
+    else if (from_x == to_x)
+        return from_y < to_y ? 2 : 0;
+    else //from_y == to_y
+        return from_x < to_x ? 1 : 3;
+}
+
 // 物件消失的记录，用于回退
 struct DisappearLog
 {
@@ -955,6 +969,9 @@ private:
         return abs(dst_x - x) + abs(dst_y - y);
     }
 
+    // if (obj_x,obj_y) is in the shoot range of tank_id
+    bool isInShootRange(int tank_id, int obj_x, int obj_y);
+
     // State transition happens here.
     bool changeState(int tank_id);
 };
@@ -1003,10 +1020,16 @@ Action HeadQuarter::takeAction(int tank_id)
 #endif
     if (!field->tankAlive[mySide][tank_id])
         return Stay;
-    Action to_take = Stay;
-    cur_state[tank_id] = EXPLORE;
     int mx = field->tankX[mySide][tank_id];
     int my = field->tankY[mySide][tank_id];
+
+    // Priority rank 1: if my tank can attack enemy's base right away, do it
+    if (!has_shoot[tank_id] && isInShootRange(tank_id, baseX[otherSide], baseY[otherSide]))
+        return Action(ExtractDirectionFromSites(mx, my, baseX[otherSide], baseY[otherSide]));
+
+    Action to_take = Stay;
+    cur_state[tank_id] = EXPLORE;
+
     auto &env0 = env[tank_id][0];
     auto &env1 = env[tank_id][1];
 
@@ -1037,6 +1060,17 @@ Action HeadQuarter::takeAction(int tank_id)
 #endif
     has_shoot[tank_id] = ActionIsShoot(to_take) ? true : false;
     return to_take;
+}
+
+bool HeadQuarter::isInShootRange(int tank_id, int obj_x, int obj_y)
+{
+    int x0 = field->tankX[mySide][tank_id];
+    int y0 = field->tankY[mySide][tank_id];
+    if (x0 != obj_x && y0 != obj_y)
+        return false;
+    if (x0 == obj_x && y0 == obj_y)
+        return false;
+    return field->ifPathOnlyInclude(x0, y0, obj_x, obj_y, int(Water));
 }
 
 int HeadQuarter::getEstimateScore(int x, int y, int dst_x, int dst_y)
@@ -1371,49 +1405,9 @@ Action HeadQuarter::Explore(int tank_id)
 
     A_search(mySide, tank_id, baseX[otherSide], baseY[otherSide], prohibited_shoots);
 
-    if (next_dir[tank_id].empty()) // there is no route to enemy's base
+    if (next_dir[tank_id].empty()) // my tank is trapped here
     {
-        // see if the tank is trapped
-        int tmp = INF;
-        int best_i, best_x, best_y;
-        for (int i = 0; i < 4; ++i)
-        {
-            int _x = mx + dx[i];
-            int _y = my + dy[i];
-            FieldItem _item = field->gameField[_y][_x];
-            if (_x < 0 || _y < 0 || _x >= fieldWidth || _y >= fieldHeight)
-                continue;
-            if (_item == None && danger[_y][_x])
-                continue;
-            if (_item == Brick &&
-                (danger[my][mx] || prohibited_shoots.count(i + 4)))
-                continue;
-            if ((_item & ~Brick) != 0) // can't reach
-                continue;
-            if ((_item == Brick ? 2 : 1) + getEstimateScore(_x, _y, baseX[otherSide], baseY[otherSide]) < tmp)
-            {
-                tmp = (_item == Brick ? 2 : 1) + getEstimateScore(_x, _y, baseX[otherSide], baseY[otherSide]);
-                best_i = i;
-                best_x = _x;
-                best_y = _y;
-            }
-        }
-        if (tmp == INF)
-            return Stay;
-        int _x = mx + dx[best_i];
-        int _y = my + dy[best_i];
-        FieldItem _item = field->gameField[_y][_x];
-        if (_item == Brick)
-        {
-            if (has_shoot[tank_id])
-                return Stay;
-            else
-                return (Action)(best_i + 4);
-        }
-        else //_item == None
-        {
-            return (Action)best_i;
-        }
+        return Stay;
     }
     else // there exists a route to enemy's base, and the route is stored in next_loc_{xy}
     {
