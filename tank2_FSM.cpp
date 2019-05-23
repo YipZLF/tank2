@@ -1025,7 +1025,7 @@ Action HeadQuarter::takeAction(int tank_id)
 
     // Priority rank 1: if my tank can attack enemy's base right away, do it
     if (!has_shoot[tank_id] && isInShootRange(tank_id, baseX[otherSide], baseY[otherSide]))
-        return Action(ExtractDirectionFromSites(mx, my, baseX[otherSide], baseY[otherSide]));
+        return Action(4 + ExtractDirectionFromSites(mx, my, baseX[otherSide], baseY[otherSide]));
 
     Action to_take = Stay;
     cur_state[tank_id] = EXPLORE;
@@ -1498,7 +1498,7 @@ void HeadQuarter::PerceiveEnv()
                         dont_shoot = true;
                         break;
                     }
-                    if ((field->gameField[y][mx] & Brick) != 0)
+                    if (field->gameField[y][mx] == Brick)
                         brick_cnt++;
                 }
                 if (dont_shoot || brick_cnt > 1)
@@ -1525,7 +1525,7 @@ void HeadQuarter::PerceiveEnv()
                         dont_shoot = true;
                         break;
                     }
-                    if ((field->gameField[my][x] & Brick) != 0)
+                    if (field->gameField[my][x] == Brick)
                         brick_cnt++;
                 }
                 if (dont_shoot || brick_cnt > 1)
@@ -1545,6 +1545,17 @@ void HeadQuarter::PerceiveEnv()
                 env[tank_id][e_tank_id] = make_pair(5, Stay);
         }
     }
+#ifdef DEBUG
+    cout << "In function Headquarter::PerceiveEnv:" << endl;
+    for (int tank_id = 0; tank_id < tankPerSide; tank_id++)
+    {
+        for (int e_tank_id = 0; e_tank_id < tankPerSide; e_tank_id++)
+        {
+            cout << "env[" << tank_id << "][" << e_tank_id << "]=(" << env[tank_id][e_tank_id].first << ","
+                 << env[tank_id][e_tank_id].second << ")" << endl;
+        }
+    }
+#endif
 }
 
 void HeadQuarter::UpdateFieldFlags()
@@ -1626,8 +1637,8 @@ int main()
             first_round = false;
 #ifdef DEBUG
             cout << TankGame::field->mySide << endl;
-            TankGame::field->DebugPrint();
-            printf("Tank 0: %d, tank 1 : %d \n", TankGame::hq->cur_state[0], TankGame::hq->cur_state[1]);
+            //TankGame::field->DebugPrint();
+            //printf("Tank 0: %d, tank 1 : %d \n", TankGame::hq->cur_state[0], TankGame::hq->cur_state[1]);
 #endif
         }
         else
