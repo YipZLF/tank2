@@ -928,6 +928,9 @@ public:
     // Defend
     //Action Defend(int tank_id);
 
+    // update some data
+    void UpdateInfo();
+
     // set danger[fieldHeight][fieldWidth]
     void getDangerousArea();
 
@@ -969,7 +972,11 @@ private:
     // if (obj_x,obj_y) is in the shoot range of tank_id
     bool isInShootRange(int tank_id, int obj_x, int obj_y);
 
+    // if the shoot action is safe (the ammo will not shoot at my tank or my base)
+    bool ShootIsSafe(int tank_id, int dir);
+
     friend struct Strategy1;
+    friend struct Strategy2;
 };
 
 HeadQuarter *hq = new HeadQuarter;
@@ -979,9 +986,6 @@ struct Strategy1
     int side;
     int tank;
     int x0, y0;
-    int e_next_x[2] = {hq->e_next_loc_x[0].front(), hq->e_next_loc_x[1].front()};
-    int e_next_y[2] = {hq->e_next_loc_y[0].front(), hq->e_next_loc_y[1].front()};
-    int e_dir[2] = {hq->e_next_dir[0].front(), hq->e_next_dir[1].front()};
     Strategy1(int _side, int _tank) : side(_side), tank(_tank)
     {
         x0 = field->tankX[side][tank];
@@ -1086,12 +1090,40 @@ private:
     }
 };
 
+struct Strategy2
+{
+    int side;
+    int tank;
+    int x0, y0;
+    Strategy2(int _side, int _tank) : side(_side), tank(_tank)
+    {
+        x0 = field->tankX[side][tank];
+        y0 = field->tankY[side][tank];
+    }
+    Action operator()()
+    {
+        for (int e = 0; e < 2; e++)
+        {
+            if (!field->tankAlive[hq->otherSide][e])
+                continue;
+            int e_next_x = hq->e_next_loc_x[e].front();
+            int e_next_y = hq->e_next_loc_y[e].front();
+            if (field->gameField[e_next_y][e_next_x] == None &&
+                hq->isInShootRange(tank, e_next_x, e_next_y))
+            {
+                int shoot_dir = ExtractDirectionFromSites(x0, y0, e_next_x, e_next_y);
+                if (hq->ShootIsSafe(tank, shoot_dir))
+                    return Action(4 + shoot_dir);
+            }
+        }
+        return Stay;
+    }
+};
+
 Action HeadQuarter::takeAction(int tank_id)
 {
 #ifdef DEBUG
-    cout << "cur state of " << tank_id << " is " << cur_state[tank_id] << endl;
-#endif
-#ifdef DEBUG
+    cout << "Calling function takeAction(tank_id=" << tank_id << ")" << endl;
     cout << "Shot state of " << tank_id << " is " << has_shoot[tank_id] << endl;
 #endif
     if (!field->tankAlive[mySide][tank_id])
@@ -1104,13 +1136,21 @@ Action HeadQuarter::takeAction(int tank_id)
 
     // Priority rank 1: if my tank can attack enemy's base right away, do it
     if (!has_shoot[tank_id] && isInShootRange(tank_id, baseX[otherSide], baseY[otherSide]))
+    {
+#ifdef DEBUG
+        cout << "Priority rank1" << endl;
+#endif
         to_take = Action(4 + ExtractDirectionFromSites(mx, my, baseX[otherSide], baseY[otherSide]));
+    }
 
     // Priority rank 2: if my tank can attack enemy's tank right away, do it
-    if (!has_shoot[tank_id])
+    if (!has_shoot[tank_id] && to_take == Stay)
     {
         if (env0.first == 1 || env1.first == 1)
         {
+#ifdef DEBUG
+            cout << "Priority rank2" << endl;
+#endif
             if (danger[my][mx] == 1)
                 to_take = env0.second;
             else if (danger[my][mx] == 2)
@@ -1141,6 +1181,37 @@ bool HeadQuarter::isInShootRange(int tank_id, int obj_x, int obj_y)
     return field->ifPathOnlyInclude(x0, y0, obj_x, obj_y, int(Water));
 }
 
+bool HeadQuarter::ShootIsSafe(int tank_id, int dir)
+{
+    if (dir == (mySide == Blue ? 0 : 2))
+        return false;
+    int x = field->tankX[mySide][tank_id];
+    int y = field->tankY[mySide][tank_id];
+    while (true)
+    {
+        x = x + dx[dir];
+        y = y + dy[dir];
+        if (x < 0 || y < 0 || x >= fieldWidth || y >= fieldHeight)
+            return true;
+        FieldItem item = field->gameField[y][x];
+        if (item == None)
+        {
+            if (x == next_loc_x[(tank_id + 1) % 2].front() &&
+                y == next_loc_y[(tank_id + 1) % 2].front())
+                return false;
+            else
+                continue;
+        }
+        else if (item == Water)
+            continue;
+        else if ((item & tankItemTypes[mySide][(tank_id + 1) % 2]) != 0 ||
+                 (x == baseX[mySide] && y == baseY[mySide]))
+            return false;
+        else
+            return true;
+    }
+}
+
 int HeadQuarter::getEstimateScore(int x, int y, int dst_x, int dst_y)
 {
     /* Can be further modified:
@@ -1148,6 +1219,23 @@ int HeadQuarter::getEstimateScore(int x, int y, int dst_x, int dst_y)
      the estimation function here. 
     */
     return getManhattenDist(x, y, dst_x, dst_y);
+}
+
+void HeadQuarter::UpdateInfo()
+{
+    for (int tank = 0; tank < tankPerSide; tank++)
+    {
+        next_loc_x[tank].clear();
+        next_loc_y[tank].clear();
+        next_dir[tank].clear();
+        e_next_loc_x[tank].clear();
+        e_next_loc_y[tank].clear();
+        e_next_dir[tank].clear();
+    }
+    getDangerousArea();
+    getBothRoutes();
+    getPriorAim();
+    PerceiveEnv();
 }
 
 void HeadQuarter::getDangerousArea()
@@ -1376,6 +1464,9 @@ void HeadQuarter::A_search(int side, int tank_id, int dst_x, int dst_y)
 
 Action HeadQuarter::Explore(int tank_id)
 {
+#ifdef DEBUG
+    cout << "Calling function Explore(tank_id=" << tank_id << ")" << endl;
+#endif // DEBUG
     int mx = field->tankX[mySide][tank_id];
     int my = field->tankY[mySide][tank_id];
     auto &env0 = env[tank_id][0];
@@ -1482,11 +1573,29 @@ Action HeadQuarter::Explore(int tank_id)
         }
     }
 
+#ifdef DEBUG
+    cout << "decide if to use strategy 1" << endl;
+#endif // DEBUG
     // decide if to use strategy 1
     Action st1_act = Strategy1(mySide, tank_id)();
     if (st1_act != Stay)
         return st1_act;
 
+#ifdef DEBUG
+    cout << "not to use strategy 1" << endl;
+    cout << "decide if to use strategy 2" << endl;
+#endif // DEBUG
+    // decide if to use strategy 2
+    if (!has_shoot[tank_id])
+    {
+        Action st2_act = Strategy2(mySide, tank_id)();
+        if (st2_act != Stay)
+            return st2_act;
+    }
+
+#ifdef DEBUG
+    cout << "not to use strategy 2" << endl;
+#endif
     if (next_dir[tank_id].empty()) // cannot find a route to enemy's Base
         return Stay;
 
@@ -1502,6 +1611,8 @@ Action HeadQuarter::Explore(int tank_id)
             bool can_shoot = true;
             for (int e = 0; e < 2; e++)
             {
+                if (!field->tankAlive[otherSide][e])
+                    continue;
                 int e_next_x = e_next_loc_x[e].front();
                 int e_next_y = e_next_loc_y[e].front();
                 if (field->gameField[e_next_y][e_next_x] == None &&
@@ -1531,6 +1642,8 @@ Action HeadQuarter::Explore(int tank_id)
                     bool can_shoot = true;
                     for (int e = 0; e < 2; e++)
                     {
+                        if (!field->tankAlive[otherSide][e])
+                            continue;
                         int e_next_x = e_next_loc_x[e].front();
                         int e_next_y = e_next_loc_y[e].front();
                         if (field->gameField[e_next_y][e_next_x] == None &&
@@ -1540,6 +1653,8 @@ Action HeadQuarter::Explore(int tank_id)
                     }
                     if (can_shoot)
                         return (Action)(dir + 4);
+                    else
+                        break;
                 }
                 else
                     break;
@@ -1736,10 +1851,7 @@ int main()
         }
 
         TankGame::field->UpdateStayTimes();
-        TankGame::hq->getDangerousArea();
-        TankGame::hq->getBothRoutes();
-        TankGame::hq->getPriorAim();
-        TankGame::hq->PerceiveEnv();
+        TankGame::hq->UpdateInfo();
         TankGame::Action act0 = TankGame::hq->takeAction(0);
         TankGame::Action act1 = TankGame::hq->takeAction(1);
         TankGame::SubmitAndDontExit(act0, act1);
