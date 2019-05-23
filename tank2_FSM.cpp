@@ -17,7 +17,7 @@
 #include "jsoncpp/json.h"
 #endif
 
-#define DEBUG
+//#define DEBUG
 
 using std::cin;
 using std::cout;
