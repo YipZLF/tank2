@@ -988,15 +988,32 @@ struct Strategy1
     int x0, y0;
     Strategy1(int _side, int _tank) : side(_side), tank(_tank)
     {
+#ifdef DEBUG
+        cout << "Calling Strategy1, tank=" << tank << endl;
+#endif // DEBUG
         x0 = field->tankX[side][tank];
         y0 = field->tankY[side][tank];
     }
     Action operator()()
     {
+#ifdef DEBUG
+        cout << "In Strategy1:" << endl;
+#endif // DEBUG
         for (int dir = 0; dir < 4; dir++)
         {
+#ifdef DEBUG
+            cout << "\tCan move to direction " << dir << "?" << endl;
+#endif // DEBUG
             if (canApply(dir))
+            {
+#ifdef DEBUG
+                cout << "\tYes" << endl;
+#endif // DEBUG
                 return Action(dir);
+            }
+#ifdef DEBUG
+            cout << "\tNo" << endl;
+#endif // DEBUG
         }
         return Stay;
     }
@@ -1058,7 +1075,7 @@ private:
                 int brick_x, brick_y;
                 bool flag = false;
                 for (int yy = y + ((y < ey0) ? 1 : -1);
-                     (y < ey0) ? (yy < ex0) : (yy > ex0);
+                     (y < ey0) ? (yy < ey0) : (yy > ey0);
                      (y < ey0) ? (yy++) : (yy--))
                 {
                     // assume no Base
@@ -1097,6 +1114,9 @@ struct Strategy2
     int x0, y0;
     Strategy2(int _side, int _tank) : side(_side), tank(_tank)
     {
+#ifdef DEBUG
+        cout << "Calling Strategy2, tank=" << tank << endl;
+#endif // DEBUG
         x0 = field->tankX[side][tank];
         y0 = field->tankY[side][tank];
     }
